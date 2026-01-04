@@ -1,4 +1,4 @@
-# Isron PostgreSQL - Docker image that contains pg extensions
+# Iron PostgreSQL - Docker image that contains pg extensions
 This is more like a personal repo for my usage but contributions are welcome if someone sees
 value to add something that they also want to use or make this more generic.
 
