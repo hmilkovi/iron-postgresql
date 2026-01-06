@@ -19,3 +19,4 @@ I use only the latest major version of PostgreSQL, currently it's 18.
 ## Added
 Extensions:
 - TimescaleDB
+- pgvectorscale
