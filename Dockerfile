@@ -1,7 +1,4 @@
 FROM rust:1.91-bookworm AS pgvectorscale-builder
-ARG PG_MAJOR
-ARG PGVECTORSCALE_VERSION
-ARG PGRX_VERSION
 
 USER root
 
@@ -32,7 +29,7 @@ RUN cargo pgrx install --pg-config /usr/bin/pg_config
 
 # -----
 
-FROM ghcr.io/cloudnative-pg/postgresql:18.1-standard-trixie
+FROM ghcr.io/cloudnative-pg/postgresql:18.2-standard-trixie
 
 USER root
 
