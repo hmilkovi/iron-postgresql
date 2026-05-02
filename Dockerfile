@@ -23,6 +23,12 @@ RUN cargo install cargo-pgrx --version 0.16.1 --locked
 RUN cargo pgrx init --pg18 /usr/bin/pg_config
 
 WORKDIR /tmp
+RUN git clone --branch v1.1.0 --depth 1 https://github.com/timescale/pg_textsearch.git \
+    && cd pg_textsearch \
+    && make \
+    && make install
+
+WORKDIR /tmp
 RUN git clone --branch 0.9.0 --depth 1 https://github.com/timescale/pgvectorscale.git
 
 WORKDIR /tmp/pgvectorscale/pgvectorscale
@@ -61,6 +67,14 @@ COPY --from=pgvectorscale-builder \
     /usr/share/postgresql/18/extension/
 COPY --from=pgvectorscale-builder \
     /usr/share/postgresql/18/extension/vectorscale.control \
+    /usr/share/postgresql/18/extension/
+
+# Copy pg_textsearch extension artifacts
+COPY --from=pgvectorscale-builder \
+    /usr/lib/postgresql/18/lib/pg_textsearch.so \
+    /usr/lib/postgresql/18/lib/
+COPY --from=pgvectorscale-builder \
+    /usr/share/postgresql/18/extension/pg_textsearch* \
     /usr/share/postgresql/18/extension/
 
 # Return to the postgres user (UID 26 in CNPG images)
