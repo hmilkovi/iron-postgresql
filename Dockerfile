@@ -1,81 +1,67 @@
-FROM rust:1.95-trixie AS pgvectorscale-builder
+ARG PG_MAJOR=18
+ARG PGVECTORSCALE_VERSION=0.9.0
+ARG PG_TEXTSEARCH_VERSION=v1.1.0
+ARG PGRX_VERSION=0.16.1
+
+# --- Builder Stage ---
+FROM rust:1.95-trixie AS builder
 ARG PG_MAJOR
 ARG PGVECTORSCALE_VERSION
+ARG PG_TEXTSEARCH_VERSION
 ARG PGRX_VERSION
 
 USER root
+ENV DEBIAN_FRONTEND=noninteractive
 
+# Install dependencies and Postgres Dev headers
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates gnupg lsb-release curl && rm -rf /var/lib/apt/lists/*
-
-RUN echo "deb http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list && \
-    curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc | gpg --dearmor -o /etc/apt/trusted.gpg.d/postgresql.gpg
-
-# Install build tools, PostgreSQL dev headers, and dependencies for Rust compilation
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential git postgresql-server-dev-18 \
-    postgresql-18 clang pkg-config libssl-dev \
+    ca-certificates gnupg lsb-release curl build-essential git clang pkg-config libssl-dev \
+    && echo "deb http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list \
+    && curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc | gpg --dearmor -o /etc/apt/trusted.gpg.d/postgresql.gpg \
+    && apt-get update && apt-get install -y --no-install-recommends \
+    postgresql-server-dev-${PG_MAJOR} \
     && rm -rf /var/lib/apt/lists/*
 
-# Install cargo-pgrx: Rust framework for PostgreSQL extension development
-RUN cargo install cargo-pgrx --version 0.16.1 --locked
-# Initialize pgrx with the target PostgreSQL version
-RUN cargo pgrx init --pg18 /usr/bin/pg_config
+# Install pgrx and toolchain
+RUN cargo install cargo-pgrx --version ${PGRX_VERSION} --locked \
+    && cargo pgrx init --pg${PG_MAJOR} /usr/bin/pg_config
 
-WORKDIR /tmp
-RUN git clone --branch v1.1.0 --depth 1 https://github.com/timescale/pg_textsearch.git \
-    && cd pg_textsearch \
-    && make \
-    && make install
+# Build pg_textsearch (Standard C extension)
+WORKDIR /build/pg_textsearch
+RUN git clone --branch ${PG_TEXTSEARCH_VERSION} --depth 1 https://github.com/timescale/pg_textsearch.git . \
+    && make && make install
 
-WORKDIR /tmp
-RUN git clone --branch 0.9.0 --depth 1 https://github.com/timescale/pgvectorscale.git
+# Build pgvectorscale (Rust extension)
+WORKDIR /build/pgvectorscale/pgvectorscale
+RUN git clone --branch ${PGVECTORSCALE_VERSION} --depth 1 https://github.com/timescale/pgvectorscale.git .. \
+    # Use 'native' if building ON the target machine,
+    # or 'x86-64-v3' for modern Hetzner Intel/AMD nodes.
+    && RUSTFLAGS="-C target-cpu=x86-64-v3" cargo pgrx install --release --pg-config /usr/bin/pg_config
 
-WORKDIR /tmp/pgvectorscale/pgvectorscale
-# Enable SIMD optimizations (AVX2, FMA) for vectorized operations on x86-64 v3+
-ENV RUSTFLAGS="-C target-cpu=x86-64-v3 -C target-feature=+avx2,+fma"
-RUN cargo pgrx install --pg-config /usr/bin/pg_config
-
-# -----
+# --- Final Stage ---
 FROM ghcr.io/cloudnative-pg/postgresql:18.3-standard-trixie
+ARG PG_MAJOR
 
 USER root
 
-# 1. Install dependencies for adding repositories
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl \
-    gnupg \
-    ca-certificates \
+# Setup TimescaleDB Repo & Install
+RUN apt-get update && apt-get install -y --no-install-recommends curl gnupg ca-certificates \
+    && curl -s https://packagecloud.io/install/repositories/timescale/timescaledb/script.deb.sh | bash \
+    && apt-get update && apt-get install -y --no-install-recommends \
+    timescaledb-2-postgresql-${PG_MAJOR} \
+    && apt-get purge -y --auto-remove curl gnupg \
     && rm -rf /var/lib/apt/lists/*
 
-# 2. Add TimescaleDB GPG key and repository
-RUN curl -s https://packagecloud.io/install/repositories/timescale/timescaledb/script.deb.sh | bash
+# Copy Extension files using precise pathing
+# Libraries (.so)
+COPY --from=builder /usr/lib/postgresql/${PG_MAJOR}/lib/vectorscale-*.so /usr/lib/postgresql/${PG_MAJOR}/lib/
+COPY --from=builder /usr/lib/postgresql/${PG_MAJOR}/lib/pg_textsearch.so /usr/lib/postgresql/${PG_MAJOR}/lib/
 
-# 3. Install TimescaleDB for PostgreSQL 18
-# Note: Ensure the package name matches the versioning in the repo (usually timescaledb-2-postgresql-18)
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    timescaledb-2-postgresql-18 \
-    && rm -rf /var/lib/apt/lists/*
+# Extension metadata (.control and .sql)
+COPY --from=builder /usr/share/postgresql/${PG_MAJOR}/extension/vectorscale* /usr/share/postgresql/${PG_MAJOR}/extension/
+COPY --from=builder /usr/share/postgresql/${PG_MAJOR}/extension/pg_textsearch* /usr/share/postgresql/${PG_MAJOR}/extension/
 
-# Copy pgvectorscale extension artifacts (Rust extension)
-# Includes compiled .so library and SQL migration files
-COPY --from=pgvectorscale-builder \
-    /usr/lib/postgresql/18/lib/vectorscale-*.so \
-    /usr/lib/postgresql/18/lib/
-COPY --from=pgvectorscale-builder \
-    /usr/share/postgresql/18/extension/vectorscale*.sql \
-    /usr/share/postgresql/18/extension/
-COPY --from=pgvectorscale-builder \
-    /usr/share/postgresql/18/extension/vectorscale.control \
-    /usr/share/postgresql/18/extension/
+RUN chown 26:26 /usr/lib/postgresql/${PG_MAJOR}/lib/vectorscale-*.so \
+    && chown 26:26 /usr/lib/postgresql/${PG_MAJOR}/lib/pg_textsearch.so
 
-# Copy pg_textsearch extension artifacts
-COPY --from=pgvectorscale-builder \
-    /usr/lib/postgresql/18/lib/pg_textsearch.so \
-    /usr/lib/postgresql/18/lib/
-COPY --from=pgvectorscale-builder \
-    /usr/share/postgresql/18/extension/pg_textsearch* \
-    /usr/share/postgresql/18/extension/
-
-# Return to the postgres user (UID 26 in CNPG images)
 USER 26
