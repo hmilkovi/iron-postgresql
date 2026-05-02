@@ -4,7 +4,7 @@ value to add something that they also want to use or make this more generic.
 
 
 ## Base image
-For base image `ghcr.io/cloudnative-pg/postgresql:18.1-standard-trixie` is use with already has:
+For base image `ghcr.io/cloudnative-pg/postgresql:18.3-standard-trixie` is use with already has:
 - PGAudit
 - Postgres Failover Slots
 - pgvector
@@ -20,3 +20,4 @@ I use only the latest major version of PostgreSQL, currently it's 18.
 Extensions:
 - TimescaleDB
 - pgvectorscale
+- pg_textsearch
