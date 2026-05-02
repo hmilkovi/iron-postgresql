@@ -34,6 +34,7 @@ RUN git clone --branch ${PG_TEXTSEARCH_VERSION} --depth 1 https://github.com/tim
 # Build pgvectorscale (Rust extension)
 WORKDIR /build/pgvectorscale/pgvectorscale
 RUN git clone --branch ${PGVECTORSCALE_VERSION} --depth 1 https://github.com/timescale/pgvectorscale.git . \
+    && cd pgvectorscale \
     # Use 'native' if building ON the target machine,
     # or 'x86-64-v3' for modern Hetzner Intel/AMD nodes.
     && RUSTFLAGS="-C target-cpu=x86-64-v3" cargo pgrx install --release --pg-config /usr/bin/pg_config
